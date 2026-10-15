@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Subtitle Overlay</title>
+    <link rel="stylesheet" href="ui.css" />
+  </head>
+  <body class="popup">
+    <header>
+      <img src="icons/icon32.png" alt="" />
+      <h1>Subtitle Overlay</h1>
+      <button id="openOptions" class="btn icon" title="Settings (API keys, languages, models)">⚙</button>
+    </header>
+    <div id="pageStatus" class="info muted">Checking this tab…</div>
+
+    <section>
+      <h2>Subtitle file</h2>
+      <div id="drop" class="drop">
+        <label class="btn primary" for="file">Load .srt / .vtt / .ass</label>
+        <input type="file" id="file" accept=".srt,.vtt,.ass,.ssa,.txt" hidden />
+        <span class="muted">or drop a file here</span>
+      </div>
+      <div id="fileInfo" class="info" hidden></div>
+      <div id="fileActions" class="row" hidden>
+        <button id="translate" class="btn">Translate to English</button>
+        <button id="clear" class="btn">Clear</button>
+      </div>
+      <div id="translateInfo" class="info"></div>
+      <label class="check"><input type="checkbox" id="autoTranslate" /> Translate Japanese files automatically</label>
+    </section>
+
+    <section>
+      <h2>Live subtitles (audio → English)</h2>
+      <div class="row">
+        <button id="liveStart" class="btn primary">● Start live subtitles</button>
+        <button id="liveStop" class="btn danger" hidden>■ Stop</button>
+      </div>
+      <div id="liveInfo" class="info muted"></div>
+    </section>
+
+    <section>
+      <h2>Timing &amp; display</h2>
+      <div class="row">
+        <span class="muted" title="Subtitles showing before the speech? Add delay. After it? Remove delay.">Delay</span>
+        <button class="btn small" data-delay="-0.5">−0.5</button>
+        <button class="btn small" data-delay="-0.1">−0.1</button>
+        <span id="delayVal" class="val">0.0s</span>
+        <button class="btn small" data-delay="0.1">+0.1</button>
+        <button class="btn small" data-delay="0.5">+0.5</button>
+        <button id="delayReset" class="btn small">reset</button>
+      </div>
+      <label class="slider">Size <input type="range" id="fontScale" min="2.5" max="8" step="0.25" /> <span id="fontScaleVal" class="val"></span></label>
+      <label class="slider">Height <input type="range" id="bottomPct" min="0" max="40" step="1" /> <span id="bottomPctVal" class="val"></span></label>
+      <label class="check"><input type="checkbox" id="showOriginal" /> Show the original text too (bilingual)</label>
+    </section>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

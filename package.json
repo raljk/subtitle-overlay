@@ -1,0 +1,10 @@
+{
+  "name": "subtitle-overlay-extension",
+  "private": true,
+  "type": "module",
+  "description": "Chrome/Brave extension that overlays English subtitles on videos (file-based or live audio translation).",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "icons": "node tools/make-icons.js"
+  }
+}

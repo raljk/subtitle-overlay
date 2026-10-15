@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Subtitle Overlay – test page</title>
+    <style>
+      body { font-family: system-ui, sans-serif; background: #15161a; color: #ddd; margin: 0; padding: 20px; }
+      #player { width: 640px; background: #000; position: relative; }
+      #player:fullscreen { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+      video { width: 640px; height: 360px; background: #000; display: block; }
+      #player:fullscreen video { width: 100%; height: 100%; }
+      .controls { margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+      button { padding: 6px 10px; }
+      #info { color: #9a9; font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <h1>Subtitle Overlay – test page</h1>
+    <div id="player">
+      <video id="v" src="fixtures/sample.mp4" controls muted playsinline></video>
+    </div>
+    <div class="controls">
+      <button id="loadSrt">Load sample.ja.srt (standalone mode)</button>
+      <button id="patch">Patch cues with English</button>
+      <button id="live">Simulate live cue</button>
+      <button id="fs">Fullscreen player</button>
+      <button id="clear">Clear</button>
+      <span id="info"></span>
+    </div>
+    <p>
+      Without the extension, <code>content.js</code> runs here as a plain script and exposes
+      <code>window.__subtitleOverlay</code>; the buttons drive it directly. With the extension installed, use the popup instead.
+    </p>
+    <script src="../content.js"></script>
+    <script type="module" src="harness.js"></script>
+  </body>
+</html>

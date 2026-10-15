@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Subtitle Overlay – Settings</title>
+    <link rel="stylesheet" href="ui.css" />
+  </head>
+  <body class="options">
+    <header>
+      <img src="icons/icon48.png" alt="" />
+      <h1>Subtitle Overlay settings</h1>
+    </header>
+    <p class="muted">
+      Keys are stored only in this browser profile and are sent only to the provider they belong to. Nothing else leaves your
+      machine: subtitle files are parsed locally, and in live mode only short audio segments are sent for recognition.
+    </p>
+
+    <form id="form">
+      <fieldset>
+        <legend>Speech recognition (live subtitles)</legend>
+        <div class="field">
+          <label for="openaiKey">OpenAI API key</label>
+          <input type="password" id="openaiKey" autocomplete="off" placeholder="sk-…" />
+          <div class="hint">
+            Needed for live subtitles: the tab audio is sent to Whisper a few seconds at a time (about $0.36 per hour of video with
+            whisper-1). <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">Get a key</a>.
+          </div>
+        </div>
+        <div class="field">
+          <label for="sttModel">Speech model</label>
+          <input type="text" id="sttModel" list="sttModels" />
+          <datalist id="sttModels">
+            <option value="whisper-1"></option>
+            <option value="gpt-4o-mini-transcribe"></option>
+            <option value="gpt-4o-transcribe"></option>
+          </datalist>
+          <div class="hint">whisper-1 works with both live pipelines. The gpt-4o transcribe models only work in “transcribe + translate”.</div>
+        </div>
+        <div class="field">
+          <label for="openaiBaseUrl">API base URL</label>
+          <input type="text" id="openaiBaseUrl" placeholder="https://api.openai.com/v1" />
+          <div class="hint">
+            Point this at a local OpenAI-compatible server (for example http://localhost:8000/v1 running faster-whisper-server) to keep
+            the audio on your machine; the key is then optional.
+          </div>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn" id="testOpenai">Test OpenAI key</button>
+          <span id="openaiTest" class="info"></span>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Translation (subtitle files, and the bilingual live pipeline)</legend>
+        <div class="field">
+          <label for="anthropicKey">Anthropic API key</label>
+          <input type="password" id="anthropicKey" autocomplete="off" placeholder="sk-ant-…" />
+          <div class="hint">
+            Claude translates subtitle files and live transcripts.
+            <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get a key</a>.
+          </div>
+        </div>
+        <div class="field">
+          <label for="claudeModel">Claude model</label>
+          <input type="text" id="claudeModel" list="claudeModels" />
+          <datalist id="claudeModels">
+            <option value="claude-opus-5-5"></option>
+            <option value="claude-sonnet-5-5"></option>
+            <option value="claude-haiku-5-5"></option>
+          </datalist>
+          <div class="hint">
+            claude-opus-5-5: best quality ($4 / $20 per million input / output tokens). claude-sonnet-5-5: $2 / $10. claude-haiku-5-5:
+            fastest and cheapest ($0.10 / $0.50), a good pick for live mode. A full-length film is a few tens of thousands of tokens,
+            so even Opus costs well under a dollar per film.
+          </div>
+        </div>
+        <div class="field">
+          <label for="textTranslator">Translate with</label>
+          <select id="textTranslator">
+            <option value="auto">Automatic (Claude when a key is set, otherwise OpenAI)</option>
+            <option value="claude">Claude</option>
+            <option value="openai">OpenAI</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="openaiTextModel">OpenAI text model</label>
+          <input type="text" id="openaiTextModel" list="openaiTextModels" />
+          <datalist id="openaiTextModels">
+            <option value="gpt-4.1-mini"></option>
+            <option value="gpt-4.1"></option>
+            <option value="gpt-4o-mini"></option>
+          </datalist>
+          <div class="hint">Used only when translating with OpenAI.</div>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn" id="testAnthropic">Test Claude key</button>
+          <span id="anthropicTest" class="info"></span>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Live subtitles</legend>
+        <div class="field">
+          <label for="liveMode">Pipeline</label>
+          <select id="liveMode">
+            <option value="whisper-translate">Whisper translate — one call, English only (fastest, cheapest)</option>
+            <option value="transcribe-translate">Transcribe + translate — original text plus a Claude/OpenAI translation (better, bilingual)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="sourceLang">Spoken language</label>
+          <select id="sourceLang">
+            <option value="ja">Japanese</option>
+            <option value="auto">Auto-detect</option>
+            <option value="ko">Korean</option>
+            <option value="zh">Chinese</option>
+            <option value="es">Spanish</option>
+            <option value="fr">French</option>
+            <option value="de">German</option>
+            <option value="it">Italian</option>
+            <option value="pt">Portuguese</option>
+            <option value="ru">Russian</option>
+            <option value="id">Indonesian</option>
+            <option value="th">Thai</option>
+            <option value="vi">Vietnamese</option>
+            <option value="tl">Filipino</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="targetLang">Subtitle language</label>
+          <select id="targetLang">
+            <option value="en">English</option>
+            <option value="ja">Japanese</option>
+            <option value="ko">Korean</option>
+            <option value="zh">Chinese</option>
+            <option value="es">Spanish</option>
+            <option value="fr">French</option>
+            <option value="de">German</option>
+            <option value="it">Italian</option>
+            <option value="pt">Portuguese</option>
+            <option value="ru">Russian</option>
+            <option value="id">Indonesian</option>
+            <option value="th">Thai</option>
+            <option value="vi">Vietnamese</option>
+            <option value="tl">Filipino</option>
+          </select>
+          <div class="hint">“Whisper translate” always produces English; other target languages need the transcribe + translate pipeline.</div>
+        </div>
+        <div class="field">
+          <label for="minSegSec">Shortest segment (seconds)</label>
+          <input type="number" id="minSegSec" min="0.5" max="10" step="0.5" />
+          <div class="hint">Shorter segments show up sooner but give the speech model less context.</div>
+        </div>
+        <div class="field">
+          <label for="maxSegSec">Longest segment (seconds)</label>
+          <input type="number" id="maxSegSec" min="2" max="30" step="0.5" />
+        </div>
+        <div class="field">
+          <label for="silenceMs">Pause that ends a segment (ms)</label>
+          <input type="number" id="silenceMs" min="200" max="3000" step="50" />
+        </div>
+      </fieldset>
+
+      <div class="actions">
+        <button type="submit" class="btn primary">Save</button>
+        <span id="saved" class="info ok"></span>
+      </div>
+    </form>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>
