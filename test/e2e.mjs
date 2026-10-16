@@ -206,6 +206,48 @@ try {
   );
   check('overlay returns to the document after fullscreen', !!back);
 
+  // Live lines: a grey draft shows while someone is talking, its final line replaces it, late drafts are
+  // ignored, and an empty final (nothing usable heard) just removes the draft.
+  await page.bringToFront();
+  const toBackground = (m) => popup.evaluate((msg) => chrome.runtime.sendMessage({ target: 'background', ...msg }), m);
+  const overlayLines = () =>
+    page.evaluate(() => {
+      const root = document.querySelector('[data-subtitle-overlay]')?.shadowRoot;
+      if (!root) return null;
+      const draft = root.querySelector('.line.draft:not(.orig)');
+      return { draft: draft ? draft.textContent : null, all: root.querySelector('.cue').textContent };
+    });
+  const t0 = Date.now();
+  const line = (segId, text, original = '') => ({ segId, text, original, wallStart: t0 - 1500, wallEnd: t0 });
+  await toBackground({ type: 'live:draft', tabId, draft: line(901, 'Draft line…', '下書き') });
+  const drafted = await waitFor(async () => ((await overlayLines())?.draft === 'Draft line…' ? true : null));
+  check('a grey draft line appears while someone is talking', !!drafted, JSON.stringify(await overlayLines()));
+  await toBackground({ type: 'live:cue', tabId, cue: { id: 'live-901', ...line(901, 'Final line.', '最終') } });
+  const finalled = await waitFor(async () => {
+    const o = await overlayLines();
+    return o && !o.draft && o.all.includes('Final line.') ? true : null;
+  });
+  check('the final line replaces its draft', !!finalled, JSON.stringify(await overlayLines()));
+  await toBackground({ type: 'live:draft', tabId, draft: line(901, 'Late draft', '遅い') });
+  await new Promise((r) => setTimeout(r, 400));
+  check('a draft arriving after its final line is ignored', (await overlayLines())?.draft === null);
+  await toBackground({ type: 'live:draft', tabId, draft: line(902, 'Never finalized', '未確定') });
+  await waitFor(async () => ((await overlayLines())?.draft === 'Never finalized' ? true : null));
+  await toBackground({ type: 'live:cue', tabId, cue: { id: 'live-902', ...line(902, '') } });
+  const draftGone = await waitFor(async () => {
+    const o = await overlayLines();
+    return o && !o.draft && o.all.includes('Final line.') ? true : null;
+  });
+  check('an empty final removes the draft and keeps the last line', !!draftGone, JSON.stringify(await overlayLines()));
+  // Live lines are also pinned to the video timeline (here: the paused 6 s mark). Move away, stop, and come back.
+  await seekTo(page, 20);
+  await toBackground({ type: 'live:state', tabId, state: 'stopped' }); // what the offscreen document sends on Stop
+  const liveCleared = await waitFor(async () => ((await overlayLines())?.all.includes('Final line.') === false ? true : null));
+  check('stopping live subtitles removes the live lines', !!liveCleared, JSON.stringify(await overlayLines()));
+  await seekTo(page, 6.2);
+  const pinned = await waitFor(async () => ((await overlayLines())?.all.includes('Final line.') ? true : null));
+  check('seeking back shows a live line again at its place in the video', !!pinned, JSON.stringify(await overlayLines()));
+
   // A stock Ollama (no OLLAMA_ORIGINS) answers 403 to chrome-extension:// origins; the rule must get us through.
   const realOllama = await fetch('http://127.0.0.1:11434/api/version').then((r) => r.ok).catch(() => false);
   if (realOllama) {

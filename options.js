@@ -8,9 +8,10 @@ const FIELDS = [
   'engine', 'localSpeechUrl', 'localSpeechModel', 'ollamaUrl', 'ollamaModel',
   'openaiKey', 'sttModel', 'openaiBaseUrl',
   'anthropicKey', 'claudeModel', 'textTranslator', 'openaiTextModel',
-  'liveMode', 'sourceLang', 'targetLang', 'minSegSec', 'maxSegSec', 'silenceMs',
+  'liveMode', 'sourceLang', 'targetLang', 'draftLines', 'minSegSec', 'maxSegSec', 'silenceMs',
 ];
 const NUMERIC = new Set(['minSegSec', 'maxSegSec', 'silenceMs']);
+const BOOLEAN = new Set(['draftLines']);
 const FALLBACKS = {
   localSpeechUrl: 'http://127.0.0.1:8742/v1',
   localSpeechModel: 'mlx-community/Mega-ASR-bf16',
@@ -27,7 +28,7 @@ function readForm() {
   for (const f of FIELDS) {
     const node = $(f);
     if (!node) continue;
-    patch[f] = NUMERIC.has(f) ? Number(node.value) : node.value.trim();
+    patch[f] = BOOLEAN.has(f) ? node.checked : NUMERIC.has(f) ? Number(node.value) : node.value.trim();
   }
   for (const [k, v] of Object.entries(FALLBACKS)) if (!patch[k]) patch[k] = v;
   return patch;
@@ -70,7 +71,9 @@ async function init() {
   const s = await getSettings();
   for (const f of FIELDS) {
     const node = $(f);
-    if (node) node.value = s[f] ?? '';
+    if (!node) continue;
+    if (BOOLEAN.has(f)) node.checked = !!s[f];
+    else node.value = s[f] ?? '';
   }
   showEngine();
   $('engine').addEventListener('change', showEngine);

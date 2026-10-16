@@ -85,6 +85,7 @@ const HANDLERS = {
   'live:stop': stopLive,
   'live:status': liveStatus,
   'live:cue': (msg) => sendToTab(msg.tabId, { type: 'live-cue', cue: msg.cue }),
+  'live:draft': (msg) => sendToTab(msg.tabId, { type: 'live-draft', draft: msg.draft }),
   'live:state': onLiveState,
   'local:test': testLocal,
   'ollama:ready': () => ollamaRuleReady.then(() => ({ ok: true })),

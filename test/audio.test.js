@@ -99,3 +99,39 @@ test('Segmenter ignores silence and faint noise', () => {
   seg.flush();
   assert.equal(segments.length, 0);
 });
+
+test('Segmenter hands out draft snapshots of the open segment, sharing the final id', () => {
+  const finals = [];
+  const drafts = [];
+  const seg = new Segmenter({
+    sampleRate: SR, minSegSec: 1, maxSegSec: 3.5, silenceMs: 350, progressEverySec: 1,
+    onSegment: (s) => finals.push(s), onProgress: (s) => drafts.push(s),
+  });
+  feed(seg, [zeros(SR), noise(2.8 * SR, 0.3, 5), zeros(SR), noise(1.5 * SR, 0.3, 6), zeros(SR)]);
+  assert.equal(finals.length, 2);
+  assert.deepEqual(finals.map((f) => f.id), [1, 2]);
+  // segment 1 = 0.24 s lead-in + 2.8 s of speech: drafts at 1, 2 and 3 s; segment 2 (1.5 s of speech): one at 1 s
+  assert.deepEqual(drafts.map((d) => d.id), [1, 1, 1, 2]);
+  assert.ok(drafts.every((d) => d.draft === true));
+  assert.ok(Math.abs(drafts[0].duration - 1) < 0.05, `first draft ${drafts[0].duration}`);
+  assert.ok(Math.abs(drafts[1].duration - 2) < 0.05, `second draft ${drafts[1].duration}`);
+  assert.equal(drafts[0].wallStart, finals[0].wallStart, 'a draft starts where its segment starts');
+  assert.ok(drafts[1].wallEnd < finals[0].wallEnd);
+});
+
+test('Segmenter sends no drafts when they are turned off, and none during silence', () => {
+  const drafts = [];
+  const off = new Segmenter({ sampleRate: SR, onSegment: () => {}, onProgress: (s) => drafts.push(s) });
+  feed(off, [noise(5 * SR, 0.3, 7)]);
+  assert.equal(drafts.length, 0);
+  const on = new Segmenter({ sampleRate: SR, progressEverySec: 1, onSegment: () => {}, onProgress: (s) => drafts.push(s) });
+  feed(on, [zeros(5 * SR)]);
+  assert.equal(drafts.length, 0);
+});
+
+test('Segmenter with the new defaults cuts continuous speech every 3.5 s', () => {
+  const finals = [];
+  const seg = new Segmenter({ sampleRate: SR, minSegSec: 1, maxSegSec: 3.5, silenceMs: 350, onSegment: (s) => finals.push(s) });
+  feed(seg, [noise(8 * SR, 0.3, 8)]);
+  assert.deepEqual(finals.map((f) => Math.round(f.duration * 10) / 10), [3.5, 3.5]);
+});

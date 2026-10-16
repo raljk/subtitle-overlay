@@ -1,16 +1,13 @@
-// Offscreen document: captures the tab's audio, cuts it into speech segments, sends each segment to
-// the speech API (and optionally a translation model) and reports the resulting cues to the
-// background worker, which forwards them to the page.
+// Offscreen document: captures the tab's audio, cuts it into speech segments and runs them through the
+// live pipeline (speech recognition, then translation), reporting draft and final lines to the background
+// worker, which forwards them to the page.
 
 import { Segmenter, Resampler, encodeWav } from './lib/audio.js';
+import { LivePipeline } from './lib/live-pipeline.js';
 import { sttTranslate, sttTranscribe, translateTexts, isHallucination, warmUpLocal } from './lib/providers.js';
 import { DEFAULTS, isLocalEngine, liveBlocker, usesTranscribeThenTranslate } from './lib/settings.js';
 
-const MAX_INFLIGHT = 2; // concurrent API calls
-const MAX_QUEUE = 3; // segments waiting; older ones are dropped if the API falls behind
-
 let session = null;
-let cueSeq = 0;
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg || msg.target !== 'offscreen') return;
@@ -35,14 +32,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 function status() {
   if (!session) return { running: false };
+  const p = session.pipeline;
   return {
     running: true,
     tabId: session.tabId,
     state: session.state,
     error: session.lastError,
-    inflight: session.inflight,
-    queued: session.queue.length,
-    segments: session.segments,
+    inflight: p.inflight,
+    queued: p.queue.length,
+    segments: p.segments,
+    drafts: p.drafts,
     startedAt: session.startedAt,
     mode: usesTranscribeThenTranslate(session.settings) ? 'transcribe-translate' : 'whisper-translate',
   };
@@ -64,23 +63,23 @@ async function start({ streamId, tabId, settings: given }) {
   const source = ctx.createMediaStreamSource(stream);
   const capture = new AudioWorkletNode(ctx, 'pcm-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
   const resampler = new Resampler(ctx.sampleRate, 16000);
-  const segmenter = new Segmenter({
-    sampleRate: 16000,
-    minSegSec: Number(settings.minSegSec) || 1.5,
-    maxSegSec: Number(settings.maxSegSec) || 7,
-    silenceMs: Number(settings.silenceMs) || 600,
-    onSegment: enqueue,
-  });
 
-  session = {
-    tabId, settings, stream, ctx, segmenter,
-    state: 'listening', lastError: null, inflight: 0, queue: [], segments: 0,
-    startedAt: Date.now(), history: [], lastText: '', lastOriginal: '',
-  };
-  const mine = session;
+  const s = { tabId, settings, stream, ctx, state: 'listening', lastError: null, startedAt: Date.now() };
+  s.pipeline = makePipeline(s);
+  s.segmenter = new Segmenter({
+    sampleRate: 16000,
+    minSegSec: Number(settings.minSegSec) || DEFAULTS.minSegSec,
+    maxSegSec: Number(settings.maxSegSec) || DEFAULTS.maxSegSec,
+    silenceMs: Number(settings.silenceMs) || DEFAULTS.silenceMs,
+    progressEverySec: settings.draftLines ? Number(settings.draftEverySec) || DEFAULTS.draftEverySec : 0,
+    onSegment: (seg) => s.pipeline.final(seg),
+    onProgress: (seg) => s.pipeline.draft(seg),
+  });
+  session = s;
+
   capture.port.onmessage = (e) => {
-    if (session !== mine) return;
-    segmenter.push(resampler.process(e.data), Date.now());
+    if (session !== s) return;
+    s.segmenter.push(resampler.process(e.data), Date.now());
   };
   source.connect(capture);
   capture.connect(ctx.destination); // the worklet outputs silence; connecting it keeps the graph running
@@ -89,22 +88,67 @@ async function start({ streamId, tabId, settings: given }) {
   if (ctx.state !== 'running') {
     // While captured, the tab is only audible through this context: never leave it muted with nothing happening.
     session = null;
+    s.pipeline.stop();
     stream.getTracks().forEach((t) => t.stop());
     ctx.close().catch(() => {});
     throw new Error(`Audio capture could not start (AudioContext is ${ctx.state}). Try again from the popup.`);
   }
   for (const track of stream.getAudioTracks()) {
     track.onended = () => {
-      if (session === mine) stop('ended');
+      if (session === s) stop('ended');
     };
   }
   report('listening');
+}
+
+/** Wires the pipeline to the configured engine and to the page. */
+function makePipeline(s) {
+  const { settings } = s;
+  const twoStep = usesTranscribeThenTranslate(settings);
+  const language = settings.sourceLang && settings.sourceLang !== 'auto' ? settings.sourceLang : undefined;
+  const wav = (seg) => new Blob([encodeWav(seg.samples, seg.sampleRate)], { type: 'audio/wav' });
+  const send = (msg) => chrome.runtime.sendMessage({ target: 'background', tabId: s.tabId, ...msg }).catch(() => {});
+
+  return new LivePipeline({
+    listen: (seg, { history }) =>
+      twoStep
+        ? sttTranscribe(wav(seg), settings, { prompt: promptFrom(history, 'original'), language })
+        : sttTranslate(wav(seg), settings, { prompt: promptFrom(history, 'text') }),
+    translate: twoStep
+      ? async (text, context) => {
+          const [out] = await translateTexts([text], {
+            settings,
+            source: settings.sourceLang || 'auto',
+            target: settings.targetLang || 'en',
+            context,
+          });
+          return out;
+        }
+      : null,
+    isJunk: isHallucination,
+    emit: (ev) => {
+      if (session !== s) return;
+      const line = { segId: ev.segId, text: ev.text, original: ev.original, wallStart: ev.wallStart, wallEnd: ev.wallEnd };
+      if (ev.type === 'cue') {
+        if (ev.text) s.lastError = null;
+        send({ type: 'live:cue', cue: { id: `live-${ev.segId}`, ...line } });
+      } else if (ev.type === 'draft') {
+        send({ type: 'live:draft', draft: line });
+      } else if (ev.type === 'state') {
+        if (s.state !== 'error' || ev.state === 'translating') report(ev.state);
+      } else if (ev.type === 'error') {
+        s.lastError = ev.message;
+        report('error', ev.message);
+      }
+    },
+  });
 }
 
 function stop(reason) {
   const s = session;
   if (!s) return;
   session = null;
+  s.pipeline.stop();
   try {
     s.stream.getTracks().forEach((t) => t.stop());
   } catch {
@@ -123,72 +167,7 @@ function report(state, detail, tabId = session?.tabId) {
   chrome.runtime.sendMessage({ target: 'background', type: 'live:state', tabId, state, detail }).catch(() => {});
 }
 
-function enqueue(seg) {
-  if (!session) return;
-  session.segments++;
-  session.queue.push(seg);
-  while (session.queue.length > MAX_QUEUE) session.queue.shift(); // fell behind: skip the oldest audio
-  pump();
-}
-
-function pump() {
-  while (session && session.inflight < MAX_INFLIGHT && session.queue.length) {
-    const s = session;
-    const seg = s.queue.shift();
-    s.inflight++;
-    processSegment(s, seg)
-      .catch(() => {})
-      .finally(() => {
-        s.inflight--;
-        if (session !== s) return;
-        if (s.inflight === 0 && !s.queue.length && s.state !== 'error') report('listening');
-        pump();
-      });
-  }
-}
-
-async function processSegment(s, seg) {
-  report('translating');
-  const blob = new Blob([encodeWav(seg.samples, seg.sampleRate)], { type: 'audio/wav' });
-  try {
-    let text;
-    let original = '';
-    if (usesTranscribeThenTranslate(s.settings)) {
-      const language = s.settings.sourceLang && s.settings.sourceLang !== 'auto' ? s.settings.sourceLang : undefined;
-      original = await sttTranscribe(blob, s.settings, { prompt: promptFrom(s.history, 'original'), language });
-      if (!original || isHallucination(original) || original === s.lastOriginal) return;
-      [text] = await translateTexts([original], {
-        settings: s.settings,
-        source: s.settings.sourceLang || 'auto',
-        target: s.settings.targetLang || 'en',
-        context: s.history.slice(-4),
-      });
-    } else {
-      text = await sttTranslate(blob, s.settings, { prompt: promptFrom(s.history, 'text') });
-    }
-    text = String(text || '').trim();
-    if (!text || isHallucination(text) || text === s.lastText) return;
-    s.lastText = text;
-    s.lastOriginal = original;
-    s.history.push({ original, text });
-    if (s.history.length > 8) s.history.shift();
-    s.lastError = null;
-    if (session !== s) return;
-    chrome.runtime
-      .sendMessage({
-        target: 'background',
-        type: 'live:cue',
-        tabId: s.tabId,
-        cue: { id: `live-${++cueSeq}`, text, original, wallStart: seg.wallStart, wallEnd: seg.wallEnd },
-      })
-      .catch(() => {});
-  } catch (e) {
-    s.lastError = e?.message || String(e);
-    if (session === s) report('error', s.lastError);
-  }
-}
-
-/** Recent output as a Whisper "prompt": keeps names and spelling consistent between segments. */
+/** Recent output as a Whisper "prompt": keeps names and spelling consistent between segments (cloud engine). */
 function promptFrom(history, key) {
   const parts = history.slice(-3).map((h) => h[key]).filter(Boolean);
   let p = parts.join(' ');

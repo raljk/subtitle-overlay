@@ -75,8 +75,10 @@ Open **Settings**, set **Run subtitles with** to **Cloud**, and paste your keys:
 1. Open the video tab, click the extension icon, then **Start live subtitles**. The tab shows a capture indicator; you keep
    hearing the audio.
 2. A red **Live** pill appears at the top-right of the video; it turns amber while a segment is being processed.
-3. Subtitles appear a few seconds after the speech: the audio is cut at pauses into 1.5–7 second segments (adjustable in
-   Settings). Each line is also placed on the video timeline, so seeking back shows it again.
+3. While someone is talking, a grey italic draft of the line appears and updates about once a second. When they pause,
+   or after 3.5 seconds of continuous speech, the final line replaces it. English usually shows up 2 to 3 seconds after
+   the speech starts, and at most about 5 seconds. Each line is also placed on the video timeline, so seeking back shows
+   it again.
 4. **Stop** in the popup, or just close the tab.
 
 ### Subtitle file
@@ -102,6 +104,8 @@ Open **Settings**, set **Run subtitles with** to **Cloud**, and paste your keys:
   captures the tab audio, plays it back so you still hear it, mixes it down to 16 kHz mono (`pcm-worklet.js`,
   `lib/audio.js`), cuts it at pauses with an energy-based voice-activity detector and sends each segment for recognition.
   With the local engine every segment is transcribed by MegaASR and translated by Ollama with the previous lines as context.
+  While a segment is still open, a snapshot of it is sent about once a second for a draft line. Drafts run only when
+  no final segment is waiting, and a draft that finishes after its final line is dropped (`lib/live-pipeline.js`).
 - Ollama rejects requests from `chrome-extension://` origins unless `OLLAMA_ORIGINS` is configured. The extension instead
   drops the Origin header from its own requests to the Ollama address with a `declarativeNetRequest` rule, so a stock
   Ollama install works. Web pages are not affected by the rule.
@@ -116,7 +120,10 @@ Open **Settings**, set **Run subtitles with** to **Cloud**, and paste your keys:
 
 ## Limitations
 
-- Live subtitles lag the speech by a few seconds: segment length plus recognition and translation time.
+- Live subtitles lag the speech by about 2 to 5 seconds. The audio is cut into short pieces of 1 to 3.5 seconds so text
+  shows up quickly. A cut sometimes falls in the middle of a word, and that line can come out wrong. Raising
+  **Longest segment** in Settings to 5 seconds makes this rarer, at the cost of a little more delay. Turning off
+  **Draft lines** halves the work the Mac does while subtitles run.
 - The local engine keeps about 10 GB of models in memory while subtitles run, and the Mac works harder (fans, battery).
 - Live mode captures one tab at a time; starting it on another tab moves it there.
 - `tabCapture` only works for the tab the popup was opened on. If you see "Extension has not been invoked for the current
@@ -130,6 +137,10 @@ Open **Settings**, set **Run subtitles with** to **Cloud**, and paste your keys:
   background → overlay path, translation through the local engine, the Ollama origin rule against a running Ollama, delay,
   reload persistence, fullscreen and clear. Run `npm i -D playwright` first, or point `PLAYWRIGHT_DIR` at a project that
   has it. Live audio capture cannot be driven this way because `tabCapture` needs a real click on the extension icon.
+- `node test/local-smoke.mjs`: speaks Japanese sentences with the macOS voice Kyoko and runs them through the real local
+  models.
+- `node test/live-latency.mjs`: streams a spoken Japanese passage through the real segmenter, pipeline and models at
+  real-time speed, and reports when text appears, for the old and the current segmenting settings.
 - `node tools/make-icons.js` regenerates the icons.
 - Test page without the extension: `python3 -m http.server 8791` in this folder, then open
   <http://localhost:8791/test/page.html>. `content.js` runs there as a plain script and the buttons drive the overlay.
@@ -144,7 +155,8 @@ popup.html/js         file loading, live start/stop, timing & display controls
 options.html/js       engine choice, local servers, API keys, languages, segmenting
 lib/settings.js       defaults, storage helpers, engine checks
 lib/subtitles.js      SRT / VTT / ASS parsing, encoding detection
-lib/audio.js          resampler, WAV encoder, voice-activity segmenter
+lib/audio.js          resampler, WAV encoder, voice-activity segmenter with draft snapshots
+lib/live-pipeline.js  turns speech segments into draft and final lines (ordering, skipping, context)
 lib/providers.js      MegaASR / Ollama (local) and Whisper / Claude / OpenAI (cloud), hallucination filter
 tools/setup-local.sh  installs and checks the local engine
 test/                 unit tests, e2e test, mock engines and the standalone test page

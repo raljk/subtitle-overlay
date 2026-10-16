@@ -8,6 +8,7 @@
 
   const IS_EXT = typeof chrome !== 'undefined' && !!(chrome.runtime && chrome.runtime.id);
   const DEFAULT_DISPLAY = { fontScale: 4.5, bottomPct: 6, boxOpacity: 0.6, showOriginal: false };
+  const DRAFT_TTL_MS = 8000; // a draft that is never finalized disappears after this long
   const CLOCK_EVENTS = ['timeupdate', 'seeking', 'seeked', 'play', 'playing', 'pause', 'ratechange', 'waiting'];
 
   const CSS = `
@@ -23,6 +24,8 @@
   white-space: pre-wrap; overflow-wrap: anywhere; letter-spacing: 0.005em;
   text-shadow: 0 0 0.09em rgba(0, 0, 0, .95), 0 0.07em 0.14em rgba(0, 0, 0, .9); }
 .line.orig { font-size: 0.72em; font-weight: 500; color: #e6e6e6; }
+.line.draft { color: #c9c9c9; font-style: italic; font-weight: 500; background: rgba(0, 0, 0, calc(var(--box) * 0.75)); }
+.line.orig.draft { color: #b5b5b5; }
 .status, .pill { position: absolute; top: 10px; font-size: 12px; line-height: 1.4; font-weight: 500; color: #fff;
   background: rgba(0, 0, 0, .65); padding: 3px 9px; border-radius: 999px; max-width: 60%;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .92; display: none;
@@ -42,7 +45,9 @@
     name: '',
     cues: [], // from a subtitle file: { start, end, text, original? }
     liveCues: [], // from live mode, mapped onto the video timeline: { id, start, end, text, original }
-    latestLive: null, // { cue, shownAt, hold } – the newest live cue, shown as it arrives
+    recentLive: [], // [{ cue, shownAt, hold }] – live lines as they arrive; the last two stay up while fresh
+    draft: null, // { segId, at, cue } – grey preview of the line still being spoken
+    finalSegs: new Set(), // segments whose final line arrived; their late drafts are ignored
     delay: 0, // seconds; subtitles are looked up at currentTime - delay
     liveOn: false,
     liveState: '',
@@ -235,7 +240,16 @@
   }
 
   function addLiveCue(cue) {
-    if (!cue || !cue.text) return;
+    if (!cue) return;
+    if (cue.segId != null) {
+      state.finalSegs.add(cue.segId);
+      if (state.finalSegs.size > 300) state.finalSegs.delete(state.finalSegs.values().next().value);
+      if (state.draft && state.draft.segId === cue.segId) {
+        state.draft = null; // the final line replaces its draft (or removes it when nothing usable was heard)
+        state.renderKey = '';
+      }
+    }
+    if (!cue.text) return;
     state.liveOn = true;
     enable();
     const start = videoTimeAt(cue.wallStart);
@@ -252,17 +266,37 @@
     state.liveCues.push(c);
     state.liveCues.sort((a, b) => a.start - b.start);
     if (state.liveCues.length > 3000) state.liveCues.shift();
-    if (!state.latestLive || cue.wallStart >= state.latestLive.cue.wallStart) {
-      const dur = Math.max(0, (cue.wallEnd - cue.wallStart) / 1000);
-      state.latestLive = { cue: c, shownAt: Date.now(), hold: Math.min(10000, Math.max(3000, dur * 1000 + 1500)) };
-    }
+    const dur = Math.max(0, (cue.wallEnd - cue.wallStart) / 1000);
+    state.recentLive.push({ cue: c, shownAt: Date.now(), hold: Math.min(10000, Math.max(3500, dur * 1000 + 2500)) });
+    state.recentLive.sort((a, b) => a.cue.wallStart - b.cue.wallStart); // finals can finish out of order
+    if (state.recentLive.length > 4) state.recentLive.shift();
     state.renderKey = '';
+  }
+
+  /** A grey preview of the line still being spoken; replaced when the final line for that segment arrives. */
+  function addLiveDraft(d) {
+    if (!d || !d.text) return;
+    if (d.segId != null && state.finalSegs.has(d.segId)) return; // its final line is already up
+    if (state.draft && d.segId != null && state.draft.segId != null && d.segId < state.draft.segId) return; // older
+    state.liveOn = true;
+    enable();
+    state.draft = {
+      segId: d.segId,
+      at: Date.now(),
+      cue: { start: -1, end: -1, text: String(d.text), original: d.original ? String(d.original) : '', draft: true },
+    };
+    state.renderKey = '';
+  }
+
+  function clearLive() {
+    state.recentLive = [];
+    state.draft = null;
   }
 
   function clearAll() {
     state.cues = [];
     state.liveCues = [];
-    state.latestLive = null;
+    clearLive();
     state.name = '';
     state.renderKey = '';
     if (!state.liveOn) disable();
@@ -277,7 +311,7 @@
     if (s === 'stopped' || s === 'ended') {
       state.liveOn = false;
       state.liveState = '';
-      state.latestLive = null;
+      clearLive();
       if (!state.cues.length && !state.liveCues.length) disable();
       return;
     }
@@ -327,10 +361,15 @@
       if (c.start > t) break;
       if (c.start >= 0 && t < c.end) active.push(c);
     }
-    const ll = state.latestLive;
-    if (ll && Date.now() - ll.shownAt < ll.hold && !active.includes(ll.cue)) active.push(ll.cue);
-    const shown = active.slice(-3);
-    const key = shown.map((c) => `${c.start}|${c.text}|${c.original}`).join('\n') + (d.showOriginal ? '|o' : '');
+    const now = Date.now();
+    for (const r of state.recentLive.filter((x) => now - x.shownAt < x.hold).slice(-2)) {
+      if (!active.includes(r.cue)) active.push(r.cue);
+    }
+    let shown = active.slice(-3);
+    const dr = state.draft;
+    if (dr && now - dr.at < DRAFT_TTL_MS && !state.finalSegs.has(dr.segId)) shown = [...shown.slice(-2), dr.cue];
+    const key =
+      shown.map((c) => `${c.start}|${c.text}|${c.original}|${c.draft ? 'd' : ''}`).join('\n') + (d.showOriginal ? '|o' : '');
     if (key !== state.renderKey) {
       state.renderKey = key;
       drawCues(shown, !!d.showOriginal);
@@ -341,12 +380,13 @@
   function drawCues(cues, showOriginal) {
     while (cueBox.firstChild) cueBox.removeChild(cueBox.firstChild);
     for (const c of cues) {
+      const extra = c.draft ? ' draft' : '';
       if (showOriginal && c.original && c.original !== c.text) {
-        const o = el('div', 'line orig');
+        const o = el('div', 'line orig' + extra);
         o.textContent = c.original;
         cueBox.appendChild(o);
       }
-      const l = el('div', 'line');
+      const l = el('div', 'line' + extra);
       l.textContent = c.text;
       cueBox.appendChild(l);
     }
@@ -410,7 +450,7 @@
       state.pageKey = pk;
       state.cues = [];
       state.liveCues = [];
-      state.latestLive = null;
+      clearLive();
       state.name = '';
       state.renderKey = '';
       if (IS_EXT) send({ target: 'background', type: 'cues:clear' });
@@ -473,6 +513,9 @@
         case 'live-cue':
           addLiveCue(msg.cue);
           break;
+        case 'live-draft':
+          addLiveDraft(msg.draft);
+          break;
         case 'live-state':
           onLiveState(msg);
           break;
@@ -508,6 +551,7 @@
     patchCues,
     clearAll,
     addLiveCue,
+    addLiveDraft,
     onLiveState,
     showStatus,
     setDelay: (d) => {

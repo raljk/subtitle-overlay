@@ -207,9 +207,20 @@
           <div class="hint">The cloud “Whisper translate” pipeline always produces English. The local engine and the cloud transcribe + translate pipeline can target any language here.</div>
         </div>
         <div class="field">
+          <label for="draftLines">Draft lines</label>
+          <label class="check" style="margin: 0"><input type="checkbox" id="draftLines" /> Show a grey draft while someone is still talking</label>
+          <div class="hint">
+            The draft updates about once a second and is replaced by the final line when the speaker pauses. With the
+            cloud engine this roughly doubles API usage.
+          </div>
+        </div>
+        <div class="field">
           <label for="minSegSec">Shortest segment (seconds)</label>
           <input type="number" id="minSegSec" min="0.5" max="10" step="0.5" />
-          <div class="hint">Shorter segments show up sooner but give the speech model less context.</div>
+          <div class="hint">
+            Defaults: 1 s, 3.5 s and 350 ms. Shorter segments show up sooner but give the models less context, so long
+            sentences get split more often.
+          </div>
         </div>
         <div class="field">
           <label for="maxSegSec">Longest segment (seconds)</label>

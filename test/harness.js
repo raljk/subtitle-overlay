@@ -24,6 +24,18 @@ $('live').onclick = () => {
   api.onLiveState({ state: 'listening' });
   info('live cue added');
 };
+let segSeq = 1000;
+$('draft').onclick = () => {
+  const segId = ++segSeq;
+  const now = Date.now();
+  api.onLiveState({ state: 'listening' });
+  api.addLiveDraft({ segId, text: 'I found a new ramen shop near…', original: '駅の近くで新しいラーメン屋を…', wallStart: now - 1500, wallEnd: now });
+  info('draft shown; final arrives in 1.5 s');
+  setTimeout(() => {
+    api.addLiveCue({ id: `live-${segId}`, segId, text: 'I found a new ramen shop near the station.', original: '駅の近くで新しいラーメン屋を見つけた。', wallStart: now - 1500, wallEnd: now + 1500 });
+    info('final replaced the draft');
+  }, 1500);
+};
 $('fs').onclick = () => $('player').requestFullscreen();
 $('clear').onclick = () => {
   api.onLiveState({ state: 'stopped' });
