@@ -3,8 +3,8 @@
 // background worker, which forwards them to the page.
 
 import { Segmenter, Resampler, encodeWav } from './lib/audio.js';
-import { sttTranslate, sttTranscribe, translateTexts, isHallucination } from './lib/providers.js';
-import { DEFAULTS, isLocalUrl } from './lib/settings.js';
+import { sttTranslate, sttTranscribe, translateTexts, isHallucination, warmUpLocal } from './lib/providers.js';
+import { DEFAULTS, isLocalEngine, liveBlocker, usesTranscribeThenTranslate } from './lib/settings.js';
 
 const MAX_INFLIGHT = 2; // concurrent API calls
 const MAX_QUEUE = 3; // segments waiting; older ones are dropped if the API falls behind
@@ -44,24 +44,21 @@ function status() {
     queued: session.queue.length,
     segments: session.segments,
     startedAt: session.startedAt,
-    mode: session.settings.liveMode,
+    mode: usesTranscribeThenTranslate(session.settings) ? 'transcribe-translate' : 'whisper-translate',
   };
 }
 
 async function start({ streamId, tabId, settings: given }) {
   stop('restart');
   const settings = { ...DEFAULTS, ...(given || {}) }; // sent by the background (no chrome.storage here)
-  if (!settings.openaiKey && !isLocalUrl(settings.openaiBaseUrl)) {
-    throw new Error('Add your OpenAI API key in Options first (it is used for speech recognition).');
-  }
-  if (settings.liveMode === 'transcribe-translate' && !settings.anthropicKey && !settings.openaiKey && !isLocalUrl(settings.openaiBaseUrl)) {
-    throw new Error('Bilingual mode needs an Anthropic or OpenAI key in Options.');
-  }
+  const blocker = liveBlocker(settings);
+  if (blocker) throw new Error(blocker);
 
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: streamId } },
     video: false,
   });
+  if (isLocalEngine(settings)) warmUpLocal(settings).catch(() => {}); // load both models before the first line
   const ctx = new AudioContext();
   await ctx.audioWorklet.addModule('pcm-worklet.js');
   const source = ctx.createMediaStreamSource(stream);
@@ -156,7 +153,7 @@ async function processSegment(s, seg) {
   try {
     let text;
     let original = '';
-    if (s.settings.liveMode === 'transcribe-translate') {
+    if (usesTranscribeThenTranslate(s.settings)) {
       const language = s.settings.sourceLang && s.settings.sourceLang !== 'auto' ? s.settings.sourceLang : undefined;
       original = await sttTranscribe(blob, s.settings, { prompt: promptFrom(s.history, 'original'), language });
       if (!original || isHallucination(original) || original === s.lastOriginal) return;

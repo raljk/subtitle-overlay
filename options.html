@@ -11,12 +11,72 @@
       <h1>Subtitle Overlay settings</h1>
     </header>
     <p class="muted">
-      Keys are stored only in this browser profile and are sent only to the provider they belong to. Nothing else leaves your
-      machine: subtitle files are parsed locally, and in live mode only short audio segments are sent for recognition.
+      The local engine is free and private: speech recognition and translation run on this Mac with open-source models, and
+      nothing leaves your computer. The cloud engine uses your own API keys instead, which are stored only in this browser
+      profile and sent only to the provider they belong to.
     </p>
 
     <form id="form">
       <fieldset>
+        <legend>Engine</legend>
+        <div class="field">
+          <label for="engine">Run subtitles with</label>
+          <select id="engine">
+            <option value="local">Local — free open-source models on this Mac, no API keys</option>
+            <option value="cloud">Cloud — OpenAI Whisper and Claude, with your API keys</option>
+          </select>
+        </div>
+      </fieldset>
+
+      <fieldset data-engine="local">
+        <legend>Local engine</legend>
+        <p class="hint" style="margin: 0 0 6px">
+          Set up once with <code>tools/setup-local.sh</code> in the extension folder. It installs the speech server
+          (mlx-audio running MegaASR) as a login item and downloads a Qwen model into Ollama.
+        </p>
+        <div class="field">
+          <label for="localSpeechUrl">Speech server</label>
+          <input type="text" id="localSpeechUrl" placeholder="http://127.0.0.1:8742/v1" />
+        </div>
+        <div class="field">
+          <label for="localSpeechModel">Speech model</label>
+          <input type="text" id="localSpeechModel" list="localSpeechModels" />
+          <datalist id="localSpeechModels">
+            <option value="mlx-community/Mega-ASR-bf16"></option>
+            <option value="mlx-community/Qwen3-ASR-1.7B-8bit"></option>
+            <option value="mlx-community/Qwen3-ASR-0.6B-8bit"></option>
+            <option value="mlx-community/whisper-large-v3-turbo-asr-fp16"></option>
+          </datalist>
+          <div class="hint">
+            MegaASR is Qwen3-ASR with an extra layer that copes with music and background noise. Any speech model that
+            mlx-audio supports works here once it is downloaded.
+          </div>
+        </div>
+        <div class="field">
+          <label for="ollamaUrl">Ollama address</label>
+          <input type="text" id="ollamaUrl" placeholder="http://127.0.0.1:11434" />
+        </div>
+        <div class="field">
+          <label for="ollamaModel">Translation model</label>
+          <input type="text" id="ollamaModel" list="ollamaModels" />
+          <datalist id="ollamaModels">
+            <option value="qwen3:8b"></option>
+            <option value="qwen3:14b"></option>
+            <option value="qwen3:4b"></option>
+          </datalist>
+          <div class="hint">Bigger models translate better but answer more slowly. Download one with: ollama pull qwen3:14b</div>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn" id="testSpeech">Test speech server</button>
+          <span id="speechTest" class="info"></span>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn" id="testOllama">Test Ollama</button>
+          <span id="ollamaTest" class="info"></span>
+        </div>
+      </fieldset>
+
+      <fieldset data-engine="cloud">
         <legend>Speech recognition (live subtitles)</legend>
         <div class="field">
           <label for="openaiKey">OpenAI API key</label>
@@ -50,7 +110,7 @@
         </div>
       </fieldset>
 
-      <fieldset>
+      <fieldset data-engine="cloud">
         <legend>Translation (subtitle files, and the bilingual live pipeline)</legend>
         <div class="field">
           <label for="anthropicKey">Anthropic API key</label>
@@ -100,8 +160,8 @@
 
       <fieldset>
         <legend>Live subtitles</legend>
-        <div class="field">
-          <label for="liveMode">Pipeline</label>
+        <div class="field" data-engine="cloud">
+          <label for="liveMode">Cloud pipeline</label>
           <select id="liveMode">
             <option value="whisper-translate">Whisper translate — one call, English only (fastest, cheapest)</option>
             <option value="transcribe-translate">Transcribe + translate — original text plus a Claude/OpenAI translation (better, bilingual)</option>
@@ -144,7 +204,7 @@
             <option value="vi">Vietnamese</option>
             <option value="tl">Filipino</option>
           </select>
-          <div class="hint">“Whisper translate” always produces English; other target languages need the transcribe + translate pipeline.</div>
+          <div class="hint">The cloud “Whisper translate” pipeline always produces English. The local engine and the cloud transcribe + translate pipeline can target any language here.</div>
         </div>
         <div class="field">
           <label for="minSegSec">Shortest segment (seconds)</label>

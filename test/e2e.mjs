@@ -1,6 +1,7 @@
-// End-to-end check of the unpacked extension in Chromium via Playwright, against a mock translation API.
+// End-to-end check of the unpacked extension in Chromium via Playwright, against mock engines.
 // Covers: content-script injection, popup → background → overlay for a Japanese .srt, automatic batch
-// translation (patch-cues), delay control, state restore after reload, clear, and the live-start error path.
+// translation through the local (Ollama) engine, delay control, state restore after reload, fullscreen,
+// clear, the live-start error path, and the Origin rule that lets a stock Ollama accept the extension.
 //
 // Usage: node test/e2e.mjs            (needs `npm i -D playwright` in this folder, or PLAYWRIGHT_DIR=<project with playwright>)
 //        HEADED=1 node test/e2e.mjs   (watch it run)
@@ -94,10 +95,17 @@ try {
   const extId = new URL(sw.url()).host;
   check('service worker started', !!extId, extId);
 
-  await sw.evaluate(
-    (s) => chrome.storage.local.set({ settings: s }),
-    { openaiKey: 'test-key', openaiBaseUrl: mock.baseUrl, textTranslator: 'openai', autoTranslateFiles: true, sourceLang: 'ja', targetLang: 'en' },
-  );
+  const localSettings = {
+    engine: 'local',
+    localSpeechUrl: mock.baseUrl,
+    localSpeechModel: 'mlx-community/Mega-ASR-bf16',
+    ollamaUrl: mock.origin,
+    ollamaModel: 'qwen3:8b',
+    autoTranslateFiles: true,
+    sourceLang: 'ja',
+    targetLang: 'en',
+  };
+  await sw.evaluate((s) => chrome.storage.local.set({ settings: s }), localSettings);
 
   const pageUrl = `${site.origin}/test/page.html`;
   const page = await context.newPage();
@@ -132,7 +140,9 @@ try {
     return t && /EN: こんにちは、世界。/.test(t) ? t : null;
   });
   check('overlay shows the translated first cue at t=2 s', !!english, english || (await overlayText(page)));
-  check('translation went through the mock API in batches', mock.calls.some((c) => c.batch > 0), JSON.stringify(mock.calls.slice(0, 3)));
+  const chat = mock.calls.find((c) => c.url === '/api/chat');
+  check('translation went through Ollama with no API key', !!chat && chat.batch === 6 && chat.think === false, JSON.stringify(chat));
+  check('the extension dropped its Origin header on Ollama requests', chat && chat.origin === null, `origin: ${chat && chat.origin}`);
   const translateInfo = await waitFor(async () => {
     const t = await popup.locator('#translateInfo').textContent();
     return /finished/.test(t || '') ? t : null;
@@ -195,6 +205,20 @@ try {
     { timeout: 5000 },
   );
   check('overlay returns to the document after fullscreen', !!back);
+
+  // A stock Ollama (no OLLAMA_ORIGINS) answers 403 to chrome-extension:// origins; the rule must get us through.
+  const realOllama = await fetch('http://127.0.0.1:11434/api/version').then((r) => r.ok).catch(() => false);
+  if (realOllama) {
+    await sw.evaluate((s) => chrome.storage.local.set({ settings: s }), { ...localSettings, ollamaUrl: 'http://127.0.0.1:11434' });
+    const status = await waitFor(
+      () => sw.evaluate(() => fetch('http://127.0.0.1:11434/api/tags').then((r) => (r.status === 200 ? 200 : null), () => null)),
+      { timeout: 5000 },
+    );
+    check('the real Ollama accepts requests from the extension', status === 200, `status ${status}`);
+    await sw.evaluate((s) => chrome.storage.local.set({ settings: s }), localSettings);
+  } else {
+    console.log('skip the real-Ollama check (Ollama is not running on 127.0.0.1:11434)');
+  }
 
   // Live-start error path: the offscreen document is created and getUserMedia fails on a bogus stream id.
   const live = await popup.evaluate((tid) => chrome.runtime.sendMessage({ target: 'background', type: 'live:start', tabId: tid, streamId: 'bogus-stream-id', url: location.href }), tabId);

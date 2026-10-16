@@ -1,21 +1,35 @@
 {
   "manifest_version": 3,
   "name": "Subtitle Overlay",
-  "version": "0.1.0",
-  "description": "Overlay English subtitles on any video: load an .srt/.vtt/.ass file, or translate the audio live (Japanese → English).",
+  "version": "0.2.0",
+  "description": "Overlay English subtitles on any video: load an .srt/.vtt/.ass file, or translate the audio live (Japanese → English) with free local models or your own API keys.",
   "minimum_chrome_version": "116",
-  "permissions": ["storage", "tabCapture", "offscreen", "activeTab", "scripting"],
+  "permissions": [
+    "storage",
+    "tabCapture",
+    "offscreen",
+    "activeTab",
+    "scripting",
+    "declarativeNetRequestWithHostAccess"
+  ],
   "host_permissions": [
     "https://api.openai.com/*",
     "https://api.anthropic.com/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],
-  "background": { "service_worker": "background.js", "type": "module" },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": true
     }
@@ -30,7 +44,10 @@
       "128": "icons/icon128.png"
     }
   },
-  "options_ui": { "page": "options.html", "open_in_tab": true },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",

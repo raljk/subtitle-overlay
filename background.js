@@ -2,8 +2,8 @@
 // audio-capture document, remembers per-tab subtitle state (so a reload keeps the subtitles) and runs
 // subtitle-file translations in batches.
 
-import { translateTexts } from './lib/providers.js';
-import { getSettings, isLocalUrl } from './lib/settings.js';
+import { translateTexts, testLocalSpeech, testOllama } from './lib/providers.js';
+import { DEFAULTS, getSettings, translateBlocker } from './lib/settings.js';
 import { hashString } from './lib/subtitles.js';
 
 const OFFSCREEN_URL = 'offscreen.html';
@@ -19,6 +19,41 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 chrome.runtime.onInstalled.addListener(({ reason }) => {
   if (reason === 'install') chrome.runtime.openOptionsPage();
+});
+
+// ---------------------------------------------------------------- Ollama origin
+// Ollama rejects requests whose Origin header is a chrome-extension:// URL (HTTP 403) unless OLLAMA_ORIGINS
+// is configured. This rule drops the Origin header from this extension's own requests to the Ollama
+// address, so it works with a stock Ollama install. Web pages are unaffected (initiator = this extension).
+const OLLAMA_RULE_ID = 1;
+
+async function syncOllamaRule() {
+  const { ollamaUrl } = await getSettings();
+  let origin;
+  try {
+    origin = new URL(ollamaUrl || DEFAULTS.ollamaUrl).origin;
+  } catch {
+    origin = new URL(DEFAULTS.ollamaUrl).origin;
+  }
+  await chrome.declarativeNetRequest.updateDynamicRules({
+    removeRuleIds: [OLLAMA_RULE_ID],
+    addRules: [
+      {
+        id: OLLAMA_RULE_ID,
+        priority: 1,
+        action: { type: 'modifyHeaders', requestHeaders: [{ header: 'origin', operation: 'remove' }] },
+        condition: { urlFilter: `|${origin}/`, initiatorDomains: [chrome.runtime.id] },
+      },
+    ],
+  });
+}
+
+const ollamaRuleReady = syncOllamaRule().catch((e) => console.warn('Ollama origin rule:', e));
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes.settings) return;
+  const before = changes.settings.oldValue?.ollamaUrl;
+  const after = changes.settings.newValue?.ollamaUrl;
+  if (before !== after) syncOllamaRule().catch((e) => console.warn('Ollama origin rule:', e));
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
@@ -51,7 +86,18 @@ const HANDLERS = {
   'live:status': liveStatus,
   'live:cue': (msg) => sendToTab(msg.tabId, { type: 'live-cue', cue: msg.cue }),
   'live:state': onLiveState,
+  'local:test': testLocal,
+  'ollama:ready': () => ollamaRuleReady.then(() => ({ ok: true })),
 };
+
+/** Settings-page checks run here so they go through the same request path as real use. */
+async function testLocal({ what, settings: draft }) {
+  await ollamaRuleReady;
+  const settings = { ...(await getSettings()), ...(draft || {}) };
+  if (what === 'ollama') await syncOllamaRule().catch(() => {}); // the page saves first; pick up a new URL now
+  const message = what === 'speech' ? await testLocalSpeech(settings) : await testOllama(settings);
+  return { ok: true, message };
+}
 
 // ---------------------------------------------------------------- per-tab state
 
@@ -131,9 +177,9 @@ async function startTranslation(tabId) {
   const t = await getTab(tabId);
   if (!t || !t.cues?.length) throw new Error('Load a subtitle file first');
   const settings = await getSettings();
-  if (!settings.anthropicKey && !settings.openaiKey && !isLocalUrl(settings.openaiBaseUrl)) {
-    throw new Error('Add an Anthropic or OpenAI API key in Options');
-  }
+  const blocker = translateBlocker(settings);
+  if (blocker) throw new Error(blocker);
+  await ollamaRuleReady;
   translating.add(tabId);
   runTranslation(tabId, t, settings)
     .catch((e) => progress(tabId, { done: true, error: e?.message || String(e) }))
@@ -245,6 +291,7 @@ async function askOffscreen(msg, retries = 15) {
 async function startLive({ tabId, streamId, url }) {
   if (tabId == null || !streamId) throw new Error('Bad request');
   const settings = await getSettings(); // offscreen documents cannot read chrome.storage themselves
+  await ollamaRuleReady;
   await ensureOffscreen();
   const r = await askOffscreen({ type: 'start', streamId, tabId, settings });
   if (!r || !r.ok) throw new Error(r?.error || 'Could not start audio capture');

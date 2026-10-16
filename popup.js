@@ -1,6 +1,6 @@
 // Popup: load subtitle files, start/stop live subtitles, adjust timing and display.
 
-import { getSettings, saveSettings, isLocalUrl } from './lib/settings.js';
+import { getSettings, saveSettings, liveBlocker, engineLabel, isLocalEngine } from './lib/settings.js';
 import { parseSubtitles, decodeSubtitleBytes, looksJapanese } from './lib/subtitles.js';
 
 const $ = (id) => document.getElementById(id);
@@ -204,9 +204,8 @@ async function startTranslate() {
 async function startLive() {
   setText('liveInfo', 'Starting…', 'muted');
   try {
-    if (!settings.openaiKey && !isLocalUrl(settings.openaiBaseUrl)) {
-      throw new Error('Add your OpenAI API key in Settings first (it is used for speech recognition).');
-    }
+    const blocker = liveBlocker(settings);
+    if (blocker) throw new Error(blocker);
     const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
     const r = await bg({ type: 'live:start', tabId: tab.id, streamId, url: tab.url });
     if (!r || !r.ok) throw new Error((r && r.error) || 'Could not start');
@@ -229,7 +228,7 @@ function renderLive(s) {
   const here = !!(s && s.running && s.tabId === tab.id);
   $('liveStart').hidden = here;
   $('liveStop').hidden = !here;
-  const mode = settings.liveMode === 'transcribe-translate' ? 'transcribe + translate (bilingual)' : 'Whisper translate';
+  const mode = engineLabel(settings);
   if (here) {
     const txt =
       s.state === 'error'
@@ -240,10 +239,12 @@ function renderLive(s) {
     setText('liveInfo', `${txt} · ${mode}`, s.state === 'error' ? 'error' : 'ok');
   } else if (s && s.running) {
     setText('liveInfo', 'Live subtitles are running in another tab. Starting here moves them to this tab.', 'warn');
-  } else if (!settings.openaiKey && !isLocalUrl(settings.openaiBaseUrl)) {
-    setText('liveInfo', 'Needs an OpenAI API key (Settings ⚙). The tab audio is sent to Whisper a few seconds at a time.', 'muted');
+  } else if (liveBlocker(settings)) {
+    setText('liveInfo', liveBlocker(settings), 'muted');
+  } else if (isLocalEngine(settings)) {
+    setText('liveInfo', `${mode}. Free and private: everything runs on this Mac. Subtitles trail the speech by a few seconds.`, 'muted');
   } else {
-    setText('liveInfo', `Mode: ${mode}. Audio goes to ${settings.sttModel || 'whisper-1'} a few seconds at a time; expect subtitles to trail the speech by a few seconds.`, 'muted');
+    setText('liveInfo', `${mode}. Audio goes to ${settings.sttModel || 'whisper-1'} a few seconds at a time. Subtitles trail the speech by a few seconds.`, 'muted');
   }
 }
 

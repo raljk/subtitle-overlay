@@ -1,15 +1,26 @@
-// Options page: API keys, models, languages and live-mode tuning.
+// Options page: engine choice, local servers, API keys, models, languages and live-mode tuning.
 
 import { getSettings, saveSettings } from './lib/settings.js';
 import { testOpenAI, testAnthropic } from './lib/providers.js';
 
 const $ = (id) => document.getElementById(id);
 const FIELDS = [
+  'engine', 'localSpeechUrl', 'localSpeechModel', 'ollamaUrl', 'ollamaModel',
   'openaiKey', 'sttModel', 'openaiBaseUrl',
   'anthropicKey', 'claudeModel', 'textTranslator', 'openaiTextModel',
   'liveMode', 'sourceLang', 'targetLang', 'minSegSec', 'maxSegSec', 'silenceMs',
 ];
 const NUMERIC = new Set(['minSegSec', 'maxSegSec', 'silenceMs']);
+const FALLBACKS = {
+  localSpeechUrl: 'http://127.0.0.1:8742/v1',
+  localSpeechModel: 'mlx-community/Mega-ASR-bf16',
+  ollamaUrl: 'http://127.0.0.1:11434',
+  ollamaModel: 'qwen3:8b',
+  openaiBaseUrl: 'https://api.openai.com/v1',
+  sttModel: 'whisper-1',
+  claudeModel: 'claude-opus-5-5',
+  openaiTextModel: 'gpt-4.1-mini',
+};
 
 function readForm() {
   const patch = {};
@@ -18,28 +29,41 @@ function readForm() {
     if (!node) continue;
     patch[f] = NUMERIC.has(f) ? Number(node.value) : node.value.trim();
   }
-  if (!patch.openaiBaseUrl) patch.openaiBaseUrl = 'https://api.openai.com/v1';
-  if (!patch.sttModel) patch.sttModel = 'whisper-1';
-  if (!patch.claudeModel) patch.claudeModel = 'claude-opus-5-5';
-  if (!patch.openaiTextModel) patch.openaiTextModel = 'gpt-4.1-mini';
+  for (const [k, v] of Object.entries(FALLBACKS)) if (!patch[k]) patch[k] = v;
   return patch;
 }
 
+function showEngine() {
+  const engine = $('engine').value;
+  for (const node of document.querySelectorAll('[data-engine]')) node.hidden = node.dataset.engine !== engine;
+}
+
+function setResult(out, text, cls) {
+  out.textContent = text;
+  out.className = `info ${cls}`;
+}
+
+/** Runs a check with the values currently in the form. */
 async function runTest(buttonId, outId, fn) {
   const out = $(outId);
   const btn = $(buttonId);
   btn.disabled = true;
-  out.className = 'info muted';
-  out.textContent = 'Testing…';
+  setResult(out, 'Testing… the first test loads the model and can take a minute.', 'muted');
   try {
-    out.textContent = await fn({ ...(await getSettings()), ...readForm() });
-    out.className = 'info ok';
+    setResult(out, await fn(), 'ok');
   } catch (e) {
-    out.textContent = e?.message || String(e);
-    out.className = 'info error';
+    setResult(out, e?.message || String(e), 'error');
   } finally {
     btn.disabled = false;
   }
+}
+
+/** Local checks run in the background worker, the same request path the subtitles use. */
+async function localTest(what) {
+  await saveSettings(readForm());
+  const r = await chrome.runtime.sendMessage({ target: 'background', type: 'local:test', what });
+  if (!r || !r.ok) throw new Error((r && r.error) || 'No answer from the extension');
+  return r.message;
 }
 
 async function init() {
@@ -48,6 +72,8 @@ async function init() {
     const node = $(f);
     if (node) node.value = s[f] ?? '';
   }
+  showEngine();
+  $('engine').addEventListener('change', showEngine);
   $('form').addEventListener('submit', async (e) => {
     e.preventDefault();
     await saveSettings(readForm());
@@ -56,8 +82,14 @@ async function init() {
       $('saved').textContent = '';
     }, 2500);
   });
-  $('testOpenai').addEventListener('click', () => runTest('testOpenai', 'openaiTest', testOpenAI));
-  $('testAnthropic').addEventListener('click', () => runTest('testAnthropic', 'anthropicTest', testAnthropic));
+  $('testSpeech').addEventListener('click', () => runTest('testSpeech', 'speechTest', () => localTest('speech')));
+  $('testOllama').addEventListener('click', () => runTest('testOllama', 'ollamaTest', () => localTest('ollama')));
+  $('testOpenai').addEventListener('click', () =>
+    runTest('testOpenai', 'openaiTest', async () => testOpenAI({ ...(await getSettings()), ...readForm() })),
+  );
+  $('testAnthropic').addEventListener('click', () =>
+    runTest('testAnthropic', 'anthropicTest', async () => testAnthropic({ ...(await getSettings()), ...readForm() })),
+  );
 }
 
 init();

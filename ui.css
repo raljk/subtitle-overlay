@@ -51,3 +51,5 @@ legend { font-weight: 600; padding: 0 6px; }
 .hint { grid-column: 2; font-size: 12px; color: var(--muted); }
 .actions { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
 @media (max-width: 600px) { .field { grid-template-columns: 1fr; } .hint { grid-column: 1; } }
+[data-engine][hidden] { display: none !important; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; background: var(--card); padding: 1px 4px; border-radius: 4px; }
